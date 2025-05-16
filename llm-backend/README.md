@@ -1,15 +1,3 @@
-# LLM Code Architecture Analyzer
-
-This project uses LLM (Claude) to analyze GitHub repositories and generate architecture diagrams. It provides a ChatGPT-like interface where users can input a GitHub repository link and ask questions about the codebase.
-
-## Features
-
-- **GitHub Repository Analysis**: Automatically clones and analyzes the structure of GitHub repositories
-- **Architecture Diagram Generation**: Creates visual diagrams showing the components and relationships in the codebase
-- **Interactive Q&A**: Chat with the LLM about the codebase to understand its architecture
-- **File Content Retrieval**: View the content of specific files in the repository
-- **Web UI**: Simple and intuitive interface similar to ChatGPT
-
 ## Setup
 
 1. Clone this repository
@@ -80,6 +68,3 @@ This project uses LLM (Claude) to analyze GitHub repositories and generate archi
 - **service/llm_client.py**: Interfaces with Claude API for code analysis
 - **schema.py**: Pydantic models for request/response validation
 
-## License
-
-MIT 

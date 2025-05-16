@@ -2,6 +2,13 @@
 
 This project provides a web application that allows users to input a GitHub repository link and automatically generates architecture diagrams for the code project. Users can then continue chatting and asking questions about the codebase.
 
+## Features
+
+- **GitHub Repository Analysis**: Automatically clones and analyzes the structure of GitHub repositories
+- **Architecture Diagram Generation**: Creates visual diagrams showing the components and relationships in the codebase
+- **Interactive Q&A**: Chat with the LLM about the codebase to understand its architecture
+- **Web UI**: Simple and intuitive interface
+
 ## Project Structure
 
 The project consists of two main components:
