@@ -46,7 +46,7 @@ The project consists of two main components:
 ### Click P2P Network Module
 ![image](images/click.png)
 ### P2P Network Example
-![image](images/p2p network.png)
+![image](images/p2p_network.png)
 
 ## Setup and Installation
 
