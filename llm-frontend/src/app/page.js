@@ -22,6 +22,12 @@ export default function HomePage() {
   const [architectureSvg, setArchitectureSvg] = useState(null);
   const [hasInitialRepo, setHasInitialRepo] = useState(false);
   
+  // Navigation state for hierarchical architecture
+  const [currentLevel, setCurrentLevel] = useState('overview'); // 'overview' or 'module'
+  const [currentModule, setCurrentModule] = useState(null);
+  const [navigationPath, setNavigationPath] = useState([]);
+  const [repoLink, setRepoLink] = useState('');
+  
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -42,7 +48,156 @@ export default function HomePage() {
     // Clear architecture data when starting a new session
     setHasInitialRepo(false);
     setArchitectureSvg(null);
+    setCurrentLevel('overview');
+    setCurrentModule(null);
+    setNavigationPath([]);
+    setRepoLink('');
   };
+
+  // Function to handle drilling down into a module
+  const handleDrillDown = useCallback(async (moduleName) => {
+    console.log(`Drilling down into module: ${moduleName}`);
+    
+    if (!repoLink || processingStateRef.current.isSending) {
+      return;
+    }
+    
+    const requestNumber = processingStateRef.current.requestNumber + 1;
+    processingStateRef.current.requestNumber = requestNumber;
+    processingStateRef.current.isSending = true;
+    
+    setLoading(true);
+    setApiError(null);
+    
+    // Update navigation state
+    const newPath = [...navigationPath, moduleName];
+    setNavigationPath(newPath);
+    setCurrentLevel('module');
+    setCurrentModule(moduleName);
+    
+    try {
+      const payload = {
+        github_link: repoLink,
+        history: [],
+        force_initial: false,
+        drill_down_module: moduleName,
+        current_path: newPath
+      };
+      
+      const res = await fetch('http://localhost:8000/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`);
+      }
+      
+      const data = await res.json();
+      
+      // Update architecture diagram with module-specific content
+      if (data.svg && data.svg.trim() !== '') {
+        if (isValidSvg(data.svg)) {
+          setArchitectureSvg(data.svg);
+        } else {
+          setApiError('Invalid module diagram data.');
+        }
+      }
+      
+      // Add message to chat if we have a session
+      if (currentSessionId) {
+        const drillDownMsg = {
+          role: 'assistant',
+          content: data.text || `Showing detailed view of ${moduleName} module.`,
+          svg: data.svg || '',
+        };
+        
+        startTransition(() => {
+          setChatSessions(prev => {
+            const updated = [...prev];
+            const index = updated.findIndex(s => s.id === currentSessionId);
+            if (index !== -1) {
+              updated[index] = {
+                ...updated[index],
+                messages: [...updated[index].messages, drillDownMsg]
+              };
+            }
+            return updated;
+          });
+        });
+      }
+      
+    } catch (err) {
+      setApiError(`Failed to drill down into ${moduleName}: ${err.message}`);
+      // Revert navigation state on error
+      setNavigationPath(navigationPath);
+      setCurrentLevel('overview');
+      setCurrentModule(null);
+    } finally {
+      if (processingStateRef.current.requestNumber === requestNumber) {
+        processingStateRef.current.isSending = false;
+        setLoading(false);
+      }
+    }
+  }, [repoLink, navigationPath, currentSessionId, startTransition]);
+
+  // Function to go back to overview
+  const handleBackToOverview = useCallback(async () => {
+    console.log('Going back to overview');
+    
+    if (!repoLink || processingStateRef.current.isSending) {
+      return;
+    }
+    
+    const requestNumber = processingStateRef.current.requestNumber + 1;
+    processingStateRef.current.requestNumber = requestNumber;
+    processingStateRef.current.isSending = true;
+    
+    setLoading(true);
+    setApiError(null);
+    
+    // Reset navigation state
+    setNavigationPath([]);
+    setCurrentLevel('overview');
+    setCurrentModule(null);
+    
+    try {
+      const payload = {
+        github_link: repoLink,
+        history: [],
+        force_initial: true, // Force regeneration of overview
+        current_path: []
+      };
+      
+      const res = await fetch('http://localhost:8000/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`);
+      }
+      
+      const data = await res.json();
+      
+      // Update architecture diagram with overview content
+      if (data.svg && data.svg.trim() !== '') {
+        if (isValidSvg(data.svg)) {
+          setArchitectureSvg(data.svg);
+        }
+      }
+      
+    } catch (err) {
+      setApiError(`Failed to return to overview: ${err.message}`);
+    } finally {
+      if (processingStateRef.current.requestNumber === requestNumber) {
+        processingStateRef.current.isSending = false;
+        setLoading(false);
+      }
+    }
+  }, [repoLink, startTransition]);
 
   const handleSend = useCallback(async () => {
     setApiError(null);
@@ -62,6 +217,11 @@ export default function HomePage() {
     let sessionId = currentSessionId;
     // If no session or repository not initialized yet
     const isInitialRequest = !hasInitialRepo;
+    
+    // Store repo link for navigation
+    if (isInitialRequest) {
+      setRepoLink(linkToSend);
+    }
     
     if (!sessionId) {
       sessionId = uuidv4();
@@ -166,6 +326,14 @@ export default function HomePage() {
     }
   }, [githubLink, chatSessions, currentSessionId, hasInitialRepo, startTransition]);
 
+  // Make drillDown function globally available
+  useEffect(() => {
+    window.drillDown = handleDrillDown;
+    return () => {
+      delete window.drillDown;
+    };
+  }, [handleDrillDown]);
+
   const currentMessages =
     chatSessions.find((s) => s.id === currentSessionId)?.messages || [];
 
@@ -217,7 +385,37 @@ export default function HomePage() {
         <div className="p-4 bg-white border-b border-gray-200">
           {hasInitialRepo && architectureSvg ? (
             <div className="architecture-diagram-container">
-              <h2 className="text-lg font-semibold mb-2">Project Architecture Diagram</h2>
+              {/* Navigation breadcrumb and controls */}
+              <div className="flex justify-between items-center mb-2">
+                <div className="flex items-center space-x-2">
+                  <h2 className="text-lg font-semibold">
+                    {currentLevel === 'overview' ? 'Project Architecture Diagram' : `Module: ${currentModule}`}
+                  </h2>
+                  {currentLevel === 'module' && (
+                    <button
+                      onClick={handleBackToOverview}
+                      disabled={loading}
+                      className="px-3 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 disabled:opacity-50"
+                    >
+                      ← Back to Overview
+                    </button>
+                  )}
+                </div>
+                <div className="text-sm text-gray-600">
+                  {currentLevel === 'overview' ? 'Click modules to explore' : 'Detailed module view'}
+                </div>
+              </div>
+              
+              {/* Breadcrumb navigation */}
+              {navigationPath.length > 0 && (
+                <div className="mb-2 text-sm text-gray-600">
+                  <span>Path: </span>
+                  <span className="font-mono">
+                    Project → {navigationPath.join(' → ')}
+                  </span>
+                </div>
+              )}
+              
               <div className="bg-gray-50 border border-gray-200 rounded p-3" style={{ minHeight: "300px" }}>
                 <SvgDisplay 
                   svgContent={architectureSvg} 
@@ -231,7 +429,10 @@ export default function HomePage() {
                   {architectureSvg ? `SVG size: ${architectureSvg.length} characters` : 'No architecture diagram'}
                 </span>
                 <span className="text-xs text-gray-500 italic">
-                  For better visualization, only key components and relationships are shown
+                  {currentLevel === 'overview' 
+                    ? 'Click on components to drill down into modules'
+                    : 'Showing internal structure of the selected module'
+                  }
                 </span>
               </div>
             </div>

@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse
 from schema import AnalyzeRequest, AnalyzeResponse, FileRequest, FileResponse
 from service.llm_client import analyze_with_claude
-from service.graph_builder import generate_architecture_svg, create_error_svg
+from service.graph_builder import generate_architecture_svg, create_error_svg, generate_module_architecture_svg
 from service.github_analyzer import get_project_structure, get_file_content
 from fastapi.middleware.cors import CORSMiddleware
 import re
@@ -120,9 +120,9 @@ async def analyze(request: AnalyzeRequest):
 
         # Get project structure
         project_structure = ""
-        if is_initial_request:
+        if is_initial_request or request.drill_down_module:
             try:
-                # For initial requests, get project structure
+                # For initial requests or drill-down requests, get project structure
                 print(f"Getting project structure...")
                 project_structure = get_project_structure(request.github_link)
                 print(f"Project structure length: {len(project_structure)}")
@@ -145,14 +145,19 @@ async def analyze(request: AnalyzeRequest):
             print(f"Follow-up conversation, not retrieving project structure")
             project_structure = ""
         
-        # Use Claude for analysis - fixed parameter order
+        # Use Claude for analysis - pass drill-down info
         print(f"Calling Claude for analysis...")
-        response_text = analyze_with_claude(request.history, request.github_link, project_structure)
+        response_text = analyze_with_claude(request.history, request.github_link, project_structure, request.drill_down_module)
         print(f"Claude analysis complete, response length: {len(response_text)}")
         
-        # For initial requests, generate architecture diagram; for follow-up requests, return empty SVG
+        # Determine current level and module
+        current_level = "module" if request.drill_down_module else "overview"
+        current_module = request.drill_down_module
+        navigation_path = request.current_path or []
+        
+        # For initial requests or drill-down requests, generate architecture diagram
         svg_content = ""
-        if is_initial_request:
+        if is_initial_request or request.drill_down_module:
             try:
                 print(f"Starting architecture diagram generation...")
                 # Try to generate a minimal architecture diagram even if repo is inaccessible
@@ -162,9 +167,13 @@ async def analyze(request: AnalyzeRequest):
                     svg_content = create_error_svg(request.github_link, repository_error)
                     print(f"Error architecture diagram generation complete, length: {len(svg_content)}")
                 else:
-                    # Correctly pass project_structure as the second parameter
-                    print(f"Generating architecture diagram using project structure...")
-                    svg_content = generate_architecture_svg(request.github_link, project_structure)
+                    # Generate different diagrams based on request type
+                    if request.drill_down_module:
+                        print(f"Generating module-specific diagram for: {request.drill_down_module}")
+                        svg_content = generate_module_architecture_svg(request.github_link, project_structure, request.drill_down_module)
+                    else:
+                        print(f"Generating overview architecture diagram...")
+                        svg_content = generate_architecture_svg(request.github_link, project_structure, make_clickable=True)
                     print(f"Architecture diagram generation complete, length: {len(svg_content)}")
                 
                 if svg_content:
@@ -180,7 +189,13 @@ async def analyze(request: AnalyzeRequest):
             print(f"Follow-up conversation, not generating architecture diagram")
         
         # Construct and return response
-        response = AnalyzeResponse(text=response_text, svg=svg_content)
+        response = AnalyzeResponse(
+            text=response_text, 
+            svg=svg_content,
+            level=current_level,
+            current_module=current_module,
+            navigation_path=navigation_path
+        )
         print(f"Returning response, SVG length: {len(svg_content)}")
         print(f"======== Request Processing Complete ========\n")
         return response

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, memo } from 'react';
+import { useState, useEffect, useRef, memo, useCallback } from 'react';
 import { createSvgUrl, isValidSvg, cleanupSvgUrl } from '../utils';
 
 /**
@@ -16,8 +16,34 @@ function SvgDisplay({ svgContent, className, style, isArchitectureDiagram = fals
   const [svgUrl, setSvgUrl] = useState(null);
   const [error, setError] = useState(null);
   const [renderMethod, setRenderMethod] = useState('object'); // 'object', 'img', or 'inline'
+  const [zoomLevel, setZoomLevel] = useState(1.0); // Zoom scale factor
   const containerRef = useRef(null);
   const objectRef = useRef(null);
+
+  // Zoom functions
+  const handleZoomIn = () => {
+    const newZoom = Math.min(zoomLevel * 1.2, 3.0); // Max zoom 3x
+    setZoomLevel(newZoom);
+  };
+
+  const handleZoomOut = () => {
+    const newZoom = Math.max(zoomLevel / 1.2, 0.3); // Min zoom 0.3x
+    setZoomLevel(newZoom);
+  };
+
+  const handleResetZoom = () => {
+    setZoomLevel(1.0);
+  };
+
+  // Handle mouse wheel zoom
+  const handleWheel = useCallback((e) => {
+    if (isArchitectureDiagram && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      const newZoom = Math.max(0.3, Math.min(3.0, zoomLevel * delta));
+      setZoomLevel(newZoom);
+    }
+  }, [zoomLevel, isArchitectureDiagram]);
   
   // 添加调试日志
   useEffect(() => {
@@ -117,11 +143,26 @@ function SvgDisplay({ svgContent, className, style, isArchitectureDiagram = fals
   if (error && renderMethod === 'inline') {
     // 当所有方法都失败时，尝试直接插入SVG内容
     return (
-      <div 
-        className={`svg-container ${className || ''} ${isArchitectureDiagram ? 'architecture-svg' : ''}`} 
-        style={style}
-        dangerouslySetInnerHTML={{ __html: svgContent }}
-      />
+      <div className={`svg-container relative ${className || ''} ${isArchitectureDiagram ? 'architecture-svg' : ''}`} style={style}>
+        {renderZoomControls}
+        <div 
+          className="svg-wrapper overflow-auto border border-gray-200 rounded"
+          style={{ 
+            minHeight: isArchitectureDiagram ? '280px' : '300px',
+            maxHeight: '600px'
+          }}
+          onWheel={handleWheel}
+        >
+          <div
+            style={{
+              transform: `scale(${zoomLevel})`,
+              transformOrigin: 'top left',
+              transition: 'transform 0.2s ease-in-out'
+            }}
+            dangerouslySetInnerHTML={{ __html: svgContent }}
+          />
+        </div>
+      </div>
     );
   }
   
@@ -150,18 +191,32 @@ function SvgDisplay({ svgContent, className, style, isArchitectureDiagram = fals
 
   // 为架构图添加控制功能
   const renderZoomControls = isArchitectureDiagram && (
-    <div className="absolute top-2 right-2 bg-white bg-opacity-75 rounded p-1 flex space-x-1">
+    <div className="absolute top-2 right-2 bg-white bg-opacity-90 rounded p-1 flex flex-col space-y-1 shadow-md">
+      <div className="flex space-x-1">
+        <button 
+          onClick={handleZoomOut}
+          disabled={zoomLevel <= 0.3}
+          className="p-1 bg-gray-200 rounded hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Zoom Out"
+        >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          <line x1="8" y1="11" x2="14" y2="11"></line>
+        </svg>
+      </button>
       <button 
-        onClick={() => {
-          if (containerRef.current) {
-            const svgElement = containerRef.current.querySelector('object');
-            if (svgElement) {
-              svgElement.style.height = `${parseInt(svgElement.style.height || '300') + 100}px`;
-            }
-          }
-        }}
-        className="p-1 bg-gray-200 rounded hover:bg-gray-300"
-        title="放大"
+        onClick={handleResetZoom}
+        className="px-2 py-1 bg-gray-200 rounded hover:bg-gray-300 text-xs font-mono"
+        title="Reset Zoom"
+      >
+        {Math.round(zoomLevel * 100)}%
+      </button>
+      <button 
+        onClick={handleZoomIn}
+        disabled={zoomLevel >= 3.0}
+        className="p-1 bg-gray-200 rounded hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+        title="Zoom In"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="11" cy="11" r="8"></circle>
@@ -170,24 +225,10 @@ function SvgDisplay({ svgContent, className, style, isArchitectureDiagram = fals
           <line x1="8" y1="11" x2="14" y2="11"></line>
         </svg>
       </button>
-      <button 
-        onClick={() => {
-          if (containerRef.current) {
-            const svgElement = containerRef.current.querySelector('object');
-            if (svgElement && parseInt(svgElement.style.height || '300') > 100) {
-              svgElement.style.height = `${parseInt(svgElement.style.height || '300') - 100}px`;
-            }
-          }
-        }}
-        className="p-1 bg-gray-200 rounded hover:bg-gray-300"
-        title="缩小"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="11" cy="11" r="8"></circle>
-          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-          <line x1="8" y1="11" x2="14" y2="11"></line>
-        </svg>
-      </button>
+      </div>
+      <div className="text-xs text-gray-500 text-center px-1" title="Hold Ctrl/Cmd + scroll to zoom">
+        Ctrl+scroll
+      </div>
     </div>
   );
 
@@ -196,17 +237,32 @@ function SvgDisplay({ svgContent, className, style, isArchitectureDiagram = fals
     return (
       <div className={`svg-container relative ${className || ''} ${isArchitectureDiagram ? 'architecture-svg' : ''}`} ref={containerRef} style={style}>
         {renderZoomControls}
-        <img
-          src={svgUrl}
-          alt="Architecture Diagram"
-          className="svg-image"
-          style={{ width: '100%', minHeight: isArchitectureDiagram ? '280px' : '300px' }}
-          onError={() => {
-            console.error('SVG image failed to load');
-            setError('SVG image failed to load');
-            setRenderMethod('inline');
+        <div 
+          className="svg-wrapper overflow-auto border border-gray-200 rounded"
+          style={{ 
+            minHeight: isArchitectureDiagram ? '280px' : '300px',
+            maxHeight: '600px'
           }}
-        />
+          onWheel={handleWheel}
+        >
+          <img
+            src={svgUrl}
+            alt="Architecture Diagram"
+            className="svg-image"
+            style={{ 
+              width: '100%',
+              minHeight: isArchitectureDiagram ? '280px' : '300px',
+              transform: `scale(${zoomLevel})`,
+              transformOrigin: 'top left',
+              transition: 'transform 0.2s ease-in-out'
+            }}
+            onError={() => {
+              console.error('SVG image failed to load');
+              setError('SVG image failed to load');
+              setRenderMethod('inline');
+            }}
+          />
+        </div>
       </div>
     );
   }
@@ -215,16 +271,29 @@ function SvgDisplay({ svgContent, className, style, isArchitectureDiagram = fals
   return (
     <div className={`svg-container relative ${className || ''} ${isArchitectureDiagram ? 'architecture-svg' : ''}`} ref={containerRef} style={style}>
       {renderZoomControls}
-      <object
-        ref={objectRef}
-        type="image/svg+xml"
-        data={svgUrl}
-        className="svg-object"
-        width="100%"
-        style={{ minHeight: isArchitectureDiagram ? '280px' : '300px' }}
+      <div 
+        className="svg-wrapper overflow-auto border border-gray-200 rounded"
+        style={{ 
+          minHeight: isArchitectureDiagram ? '280px' : '300px',
+          maxHeight: '600px'
+        }}
       >
-        <p>Your browser cannot display this SVG.</p>
-      </object>
+        <object
+          ref={objectRef}
+          type="image/svg+xml"
+          data={svgUrl}
+          className="svg-object"
+          width="100%"
+          style={{ 
+            minHeight: isArchitectureDiagram ? '280px' : '300px',
+            transform: `scale(${zoomLevel})`,
+            transformOrigin: 'top left',
+            transition: 'transform 0.2s ease-in-out'
+          }}
+        >
+          <p>Your browser cannot display this SVG.</p>
+        </object>
+      </div>
     </div>
   );
 }

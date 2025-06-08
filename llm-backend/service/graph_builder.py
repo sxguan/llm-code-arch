@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 anthropic = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-def generate_architecture_svg(github_link: str, project_structure: str) -> str:
+def generate_architecture_svg(github_link: str, project_structure: str, make_clickable: bool = False) -> str:
     """
     Generate architecture SVG based on project structure
     """
@@ -35,7 +35,21 @@ def generate_architecture_svg(github_link: str, project_structure: str) -> str:
             # Add nodes for each major component
             for component in filtered_components:
                 label = f"{component['name']}\n{component['description']}"
-                dot.node(component['name'], label, shape="box", style="rounded,filled", fillcolor="lightskyblue")
+                node_attrs = {
+                    "shape": "box", 
+                    "style": "rounded,filled", 
+                    "fillcolor": "lightskyblue"
+                }
+                
+                # Add click functionality for overview diagrams
+                if make_clickable:
+                    node_attrs["URL"] = f"javascript:drillDown('{component['name']}')"
+                    node_attrs["target"] = "_parent"
+                    node_attrs["tooltip"] = f"Click to explore {component['name']} module"
+                    node_attrs["style"] = "rounded,filled,bold"
+                    node_attrs["fillcolor"] = "lightblue"
+                
+                dot.node(component['name'], label, **node_attrs)
             
             # Add relationships
             for component in filtered_components:
@@ -80,6 +94,172 @@ def generate_architecture_svg(github_link: str, project_structure: str) -> str:
         print(f"Error in generate_architecture_svg: {str(e)}")
         # Return a simple error SVG instead of throwing an exception
         return create_error_svg(github_link, str(e))
+
+def generate_module_architecture_svg(github_link: str, project_structure: str, module_name: str) -> str:
+    """
+    Generate architecture SVG for a specific module
+    """
+    try:
+        print(f"Generating module SVG for {module_name} in {github_link}")
+        
+        # Use LLM to analyze the specific module
+        module_components = analyze_module_with_llm(github_link, project_structure, module_name)
+        
+        dot = graphviz.Digraph()
+        dot.attr(rankdir="TB")  # Top to bottom for module details
+        
+        # Extract repository name from GitHub link
+        repo_name = github_link.split("/")[-1].replace(".git", "")
+        dot.attr(label=f"Module: {module_name} - {repo_name}", fontsize="20")
+        
+        if module_components:
+            print(f"Using {len(module_components)} components for module {module_name}")
+            
+            # Add nodes for each component in the module
+            for component in module_components:
+                label = f"{component['name']}\n{component['description']}"
+                dot.node(component['name'], label, 
+                        shape="box", 
+                        style="rounded,filled", 
+                        fillcolor="lightgreen")
+            
+            # Add relationships within the module
+            for component in module_components:
+                for dependency in component.get('dependencies', []):
+                    dot.edge(component['name'], dependency, 
+                             label=component.get('dependency_details', {}).get(dependency, ''))
+        else:
+            # Fallback: show files in the module
+            print(f"No LLM analysis available, showing file structure for {module_name}")
+            files_in_module = extract_module_files(project_structure, module_name)
+            
+            if files_in_module:
+                for i, file_name in enumerate(files_in_module[:10]):  # Limit to 10 files
+                    file_label = file_name.split('/')[-1]  # Just filename
+                    dot.node(f"file_{i}", file_label, shape="ellipse", style="filled", fillcolor="lightyellow")
+            else:
+                dot.node("no_files", f"No files found in {module_name}", shape="box", style="filled", fillcolor="lightcoral")
+        
+        # Generate SVG
+        svg_result = dot.pipe(format='svg').decode("utf-8")
+        print(f"Generated module SVG of length: {len(svg_result)}")
+        
+        return svg_result
+        
+    except Exception as e:
+        print(f"Error in generate_module_architecture_svg: {str(e)}")
+        return create_error_svg(github_link, f"Failed to generate module diagram for {module_name}: {str(e)}")
+
+def analyze_module_with_llm(github_link: str, project_structure: str, module_name: str) -> List[Dict]:
+    """
+    Use LLM to analyze a specific module and identify its internal components
+    """
+    try:
+        if not project_structure or project_structure.startswith("[Error"):
+            print(f"Project structure unavailable for module analysis of {module_name}")
+            return []
+            
+        print(f"Analyzing module {module_name} with LLM...")
+        
+        system_prompt = f"""You are analyzing a specific module "{module_name}" within a GitHub repository.
+Your task is to identify the internal components and their relationships within this module only.
+Focus on subcomponents, functions, classes, and internal architecture within the {module_name} module.
+
+The output must be valid JSON in this format:
+[
+  {{
+    "name": "SubComponentName",
+    "description": "Brief description of subcomponent purpose (1-2 lines)",
+    "dependencies": ["OtherSubComponent1", "OtherSubComponent2"],
+    "dependency_details": {{
+      "OtherSubComponent1": "Brief description of relationship",
+      "OtherSubComponent2": "Brief description of relationship"
+    }}
+  }}
+]
+
+Important rules:
+1. Focus ONLY on components within the {module_name} module
+2. Identify 3-8 key subcomponents/functions/classes within this module
+3. Keep component names concise but descriptive
+4. Show internal relationships within the module
+5. If the module has subdirectories, treat them as subcomponents
+6. Ensure all dependency names match exactly with component names
+"""
+        
+        user_message = f"""Analyze the "{module_name}" module in this GitHub repository: {github_link}
+
+Project structure:
+```
+{project_structure}
+```
+
+Focus specifically on the {module_name} module and identify its internal architecture, subcomponents, and relationships.
+Return ONLY JSON without any additional text."""
+
+        response = anthropic.messages.create(
+            model="claude-3-haiku-20240307",
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_message}],
+            max_tokens=2000,
+            temperature=0.2
+        )
+        
+        # Extract JSON from response
+        response_text = response.content[0].text
+        
+        # Find JSON content
+        json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', response_text)
+        if json_match:
+            json_str = json_match.group(1)
+        else:
+            json_str = response_text
+            
+        # Parse the JSON response
+        try:
+            components = json.loads(json_str)
+            print(f"Successfully parsed {len(components)} components for module {module_name}")
+            return components
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse module LLM response as JSON: {e}")
+            return []
+            
+    except Exception as e:
+        print(f"Error in analyze_module_with_llm: {str(e)}")
+        return []
+
+def extract_module_files(project_structure: str, module_name: str) -> List[str]:
+    """
+    Extract files that belong to a specific module from project structure
+    """
+    files = []
+    lines = project_structure.split("\n")
+    in_module = False
+    current_indent = 0
+    
+    for line in lines:
+        if not line.strip():
+            continue
+            
+        line_indent = len(line) - len(line.lstrip())
+        line_content = line.strip()
+        
+        # Check if we're entering the module directory
+        if module_name.lower() in line_content.lower() and line_content.endswith('/'):
+            in_module = True
+            current_indent = line_indent
+            continue
+            
+        # Check if we're leaving the module directory
+        if in_module and line_indent <= current_indent and not line_content.endswith('/'):
+            in_module = False
+            continue
+            
+        # If we're in the module, collect files
+        if in_module and not line_content.endswith('/'):
+            files.append(line_content)
+    
+    return files
 
 def analyze_project_with_llm(github_link: str, project_structure: str) -> List[Dict]:
     """
